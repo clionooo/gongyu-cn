@@ -1,0 +1,144 @@
+import { assert, it } from '@effect/vitest';
+import { MetadataError } from '@gongyu/domain/metadata';
+import {
+    cleanMetadataTitle,
+    type MetadataFetch,
+    makeMetadataClient,
+} from '@gongyu/integrations/metadata-client';
+import { Effect } from 'effect';
+
+it.effect('extracts bounded candidates and resolves HTTPS images', () =>
+    Effect.gen(function* () {
+        const requests: URL[] = [];
+        const fetchImplementation: MetadataFetch = async (input) => {
+            const url = new URL(input.toString());
+            requests.push(url);
+            if (url.pathname === '/start') {
+                return new Response(null, {
+                    headers: { Location: '/article' },
+                    status: 302,
+                });
+            }
+            return new Response(
+                `
+                    <html>
+                        <head>
+                            <title>Fallback metadata title</title>
+                            <meta property="og:title" content="Cloudflare &amp; metadata | Example">
+                            <meta name="description" content="Bounded &amp; useful description">
+                            <meta property="og:image" content="/image.webp?width=1200&amp;quality=75">
+                        </head>
+                    </html>
+                `,
+                { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+            );
+        };
+        const client = makeMetadataClient(fetchImplementation);
+        const result = yield* client.fetch('https://example.com/start');
+
+        assert.strictEqual(result.title, 'Cloudflare & metadata');
+        assert.strictEqual(result.description, 'Bounded & useful description');
+        assert.strictEqual(
+            result.imageUrl,
+            'https://example.com/image.webp?width=1200&quality=75',
+        );
+        assert.deepEqual(
+            requests.map((url) => url.href),
+            ['https://example.com/start', 'https://example.com/article'],
+        );
+    }),
+);
+
+it('matches legacy title suffix cleaning behavior', () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+        ['Article Title | Website Name', 'Article Title'],
+        ['Article Title - Website Name', 'Article Title'],
+        ['Article Title — Website Name', 'Article Title'],
+        ['Article Title – Website Name', 'Article Title'],
+        ['Article Title · Website Name', 'Article Title'],
+        ['Video Title: youtube', 'Video Title'],
+        ['Repository Name · GitHub', 'Repository Name'],
+        ['', ''],
+        ['   ', ''],
+        ['YouTube', 'YouTube'],
+        ['Simple Article Title', 'Simple Article Title'],
+        ['Part 1 - Part 2 | Website', 'Part 1'],
+        [
+            'Kubernetes v1.35: New level of efficiency with in-place Pod restart | Kubernetes',
+            'Kubernetes v1.35: New level of efficiency with in-place Pod restart',
+        ],
+        [
+            'A real-time, high-performance solution - TechSite',
+            'A real-time, high-performance solution',
+        ],
+        ['Self-hosted application', 'Self-hosted application'],
+    ];
+
+    for (const [title, expected] of cases) {
+        assert.strictEqual(cleanMetadataTitle(title), expected);
+    }
+});
+
+it.effect('rejects credentials HTTP redirects and oversized bodies', () =>
+    Effect.gen(function* () {
+        let calls = 0;
+        const fetchImplementation: MetadataFetch = async () => {
+            calls += 1;
+            return new Response(null, {
+                headers: { Location: 'http://example.com/insecure' },
+                status: 302,
+            });
+        };
+        const client = makeMetadataClient(fetchImplementation);
+        const credentials = yield* client
+            .fetch('https://user:secret@example.com')
+            .pipe(Effect.flip);
+        assert.instanceOf(credentials, MetadataError);
+        assert.strictEqual(calls, 0);
+
+        const redirect = yield* client
+            .fetch('https://example.com/start')
+            .pipe(Effect.flip);
+        assert.instanceOf(redirect, MetadataError);
+        if (redirect instanceof MetadataError) {
+            assert.strictEqual(redirect.code, 'insecure_redirect');
+        }
+
+        const oversized = makeMetadataClient(
+            async () =>
+                new Response('<html></html>', {
+                    headers: {
+                        'Content-Length': '1048577',
+                        'Content-Type': 'text/html',
+                    },
+                }),
+        );
+        const tooLarge = yield* oversized
+            .fetch('https://example.com')
+            .pipe(Effect.flip);
+        assert.instanceOf(tooLarge, MetadataError);
+        if (tooLarge instanceof MetadataError) {
+            assert.strictEqual(tooLarge.code, 'response_too_large');
+        }
+    }),
+);
+
+it.effect('classifies retryable status failures without reading bodies', () =>
+    Effect.gen(function* () {
+        const client = makeMetadataClient(
+            async () =>
+                new Response('unavailable', {
+                    headers: { 'Content-Type': 'text/plain' },
+                    status: 503,
+                }),
+        );
+        const error = yield* client
+            .fetch('https://example.com')
+            .pipe(Effect.flip);
+        assert.instanceOf(error, MetadataError);
+        if (error instanceof MetadataError) {
+            assert.strictEqual(error.code, 'upstream_status');
+            assert.isTrue(error.retryable);
+        }
+    }),
+);

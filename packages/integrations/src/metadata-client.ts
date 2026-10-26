@@ -1,0 +1,435 @@
+import { MetadataCandidate, MetadataError } from '@gongyu/domain/metadata';
+import { Context, Effect } from 'effect';
+import { assertPublicHostname } from './network-safety';
+
+const HTML_LIMIT_BYTES = 1_048_576;
+const FETCH_TIMEOUT_MS = 10_000;
+const REDIRECT_LIMIT = 5;
+const TITLE_SUFFIX_PATTERNS = [
+    /\s*[|–—]\s*[^|–—]+$/u,
+    /\s+-\s+[^-]+$/u,
+    /\s*·\s*[^·]+$/u,
+];
+const REGEXP_SPECIAL_CHARACTERS = /[.*+?^${}()|[\]\\]/gu;
+const HTML_CHARACTER_REFERENCE =
+    /&(#x[0-9a-f]+|#[0-9]+|amp|apos|gt|lt|nbsp|quot);/giu;
+const HTML_NAMED_CHARACTERS: Readonly<Record<string, string>> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    nbsp: '\u00a0',
+    quot: '"',
+};
+const KNOWN_TITLE_SUFFIX_PATTERNS = [
+    'YouTube',
+    'Wikipedia',
+    'Reddit',
+    'Twitter',
+    'X',
+    'GitHub',
+    'Stack Overflow',
+    'Medium',
+    'The Verge',
+    'Hacker News',
+    'Ars Technica',
+    'TechCrunch',
+    'Wired',
+    'BBC',
+    'CNN',
+    'The New York Times',
+    'The Guardian',
+    'The Washington Post',
+    'Forbes',
+    'Bloomberg',
+].map(
+    (suffix) =>
+        new RegExp(
+            `\\s*[|–—·:-]\\s*${suffix.replace(REGEXP_SPECIAL_CHARACTERS, '\\$&')}\\s*$`,
+            'iu',
+        ),
+);
+
+export type MetadataFetch = (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+) => Promise<Response>;
+
+export interface MetadataClientShape {
+    readonly fetch: (
+        url: string,
+    ) => Effect.Effect<MetadataCandidate, MetadataError>;
+}
+
+export class MetadataClient extends Context.Service<
+    MetadataClient,
+    MetadataClientShape
+>()('@gongyu/integrations/MetadataClient') {}
+
+function failure(
+    code: string,
+    message: string,
+    retryable: boolean,
+): MetadataError {
+    return MetadataError.make({ code, message, retryable });
+}
+
+function decodeHtmlAttribute(value: string): string {
+    return value.replace(
+        HTML_CHARACTER_REFERENCE,
+        (reference, entity: string) => {
+            const normalized = entity.toLowerCase();
+            const named = HTML_NAMED_CHARACTERS[normalized];
+            if (named !== undefined) {
+                return named;
+            }
+            const codePoint = normalized.startsWith('#x')
+                ? Number.parseInt(normalized.slice(2), 16)
+                : Number.parseInt(normalized.slice(1), 10);
+            if (
+                !Number.isInteger(codePoint) ||
+                codePoint < 1 ||
+                codePoint > 0x10ffff ||
+                (codePoint >= 0xd800 && codePoint <= 0xdfff)
+            ) {
+                return reference;
+            }
+            return String.fromCodePoint(codePoint);
+        },
+    );
+}
+
+export function cleanMetadataTitle(title: string): string {
+    const original = title.trim();
+    if (original === '') {
+        return original;
+    }
+
+    let cleaned = original;
+    for (const pattern of TITLE_SUFFIX_PATTERNS) {
+        cleaned = cleaned.replace(pattern, '');
+    }
+    for (const pattern of KNOWN_TITLE_SUFFIX_PATTERNS) {
+        cleaned = cleaned.replace(pattern, '');
+    }
+
+    cleaned = cleaned.trim();
+    return cleaned === '' ? original : cleaned;
+}
+
+function validateUrl(value: string): URL | MetadataError {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        return failure('invalid_url', '请输入有效的 HTTPS 网址。', false);
+    }
+    if (value.length > 2_048) {
+        return failure('url_too_long', '元数据网址过长。', false);
+    }
+    if (url.protocol !== 'https:') {
+        return failure(
+            'https_required',
+            '获取元数据需要使用 HTTPS 网址。',
+            false,
+        );
+    }
+    if (url.username !== '' || url.password !== '') {
+        return failure(
+            'credentials_forbidden',
+            'URLs containing credentials are not allowed.',
+            false,
+        );
+    }
+    return url;
+}
+
+const readBoundedText = Effect.fn('MetadataClient.readBoundedText')(function* (
+    response: Response,
+    deadline: number,
+) {
+    const declaredLength = Number.parseInt(
+        response.headers.get('Content-Length') ?? '0',
+        10,
+    );
+    if (declaredLength > HTML_LIMIT_BYTES) {
+        return yield* failure(
+            'response_too_large',
+            '元数据响应内容过大。',
+            false,
+        );
+    }
+    if (response.body === null) {
+        return '';
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let size = 0;
+    let text = '';
+    while (true) {
+        const result = yield* Effect.tryPromise({
+            try: async () => {
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) {
+                    throw new Error('元数据响应读取超时。');
+                }
+                let timeout: ReturnType<typeof setTimeout> | undefined;
+                try {
+                    return await Promise.race([
+                        reader.read(),
+                        new Promise<never>((_, reject) => {
+                            timeout = setTimeout(() => {
+                                void reader.cancel();
+                                reject(new Error('元数据响应读取超时。'));
+                            }, remaining);
+                        }),
+                    ]);
+                } finally {
+                    if (timeout !== undefined) {
+                        clearTimeout(timeout);
+                    }
+                }
+            },
+            catch: () =>
+                failure(
+                    'body_read_failed',
+                    '无法读取元数据响应。',
+                    true,
+                ),
+        });
+        if (result.done) {
+            text += decoder.decode();
+            return text;
+        }
+        size += result.value.byteLength;
+        if (size > HTML_LIMIT_BYTES) {
+            yield* Effect.promise(() => reader.cancel());
+            return yield* failure(
+                'response_too_large',
+                '元数据响应内容过大。',
+                false,
+            );
+        }
+        text += decoder.decode(result.value, { stream: true });
+    }
+});
+
+const extractMetadata = Effect.fn('MetadataClient.extract')(function* (
+    html: string,
+    finalUrl: URL,
+) {
+    let documentTitle = '';
+    let openGraphTitle: string | null = null;
+    let description: string | null = null;
+    let openGraphDescription: string | null = null;
+    let imageUrl: string | null = null;
+    const rewriter = new HTMLRewriter()
+        .on('title', {
+            text(chunk) {
+                documentTitle += chunk.text;
+            },
+        })
+        .on('meta', {
+            element(element) {
+                const property = (
+                    element.getAttribute('property') ??
+                    element.getAttribute('name') ??
+                    ''
+                ).toLowerCase();
+                const content = decodeHtmlAttribute(
+                    element.getAttribute('content') ?? '',
+                ).trim();
+                if (property === 'og:title' && content !== '') {
+                    openGraphTitle = content;
+                }
+                if (property === 'og:description' && content !== '') {
+                    openGraphDescription = content;
+                }
+                if (
+                    description === null &&
+                    property === 'description' &&
+                    content !== ''
+                ) {
+                    description = content;
+                }
+                if (
+                    imageUrl === null &&
+                    (property === 'og:image' || property === 'twitter:image') &&
+                    content !== ''
+                ) {
+                    try {
+                        const resolved = new URL(content, finalUrl);
+                        if (
+                            resolved.protocol === 'https:' &&
+                            resolved.username === '' &&
+                            resolved.password === ''
+                        ) {
+                            imageUrl = resolved.href;
+                        }
+                    } catch {
+                        imageUrl = null;
+                    }
+                }
+            },
+        });
+    yield* Effect.tryPromise({
+        try: () => rewriter.transform(new Response(html)).text(),
+        catch: () =>
+            failure(
+                'html_parse_failed',
+                '无法解析元数据响应。',
+                false,
+            ),
+    });
+
+    const normalizedTitle = cleanMetadataTitle(
+        (openGraphTitle ?? documentTitle).replace(/\s+/gu, ' '),
+    );
+    const resolvedDescription = (openGraphDescription ?? description) as
+        | string
+        | null;
+    const resolvedImageUrl = imageUrl as string | null;
+    return MetadataCandidate.make({
+        description: resolvedDescription?.slice(0, 4_096) ?? null,
+        imageUrl:
+            resolvedImageUrl !== null && resolvedImageUrl.length <= 2_048
+                ? resolvedImageUrl
+                : null,
+        title: normalizedTitle === '' ? null : normalizedTitle.slice(0, 500),
+    });
+});
+
+export function makeMetadataClient(
+    configuredFetch?: MetadataFetch,
+): MetadataClientShape {
+    const fetchImplementation = configuredFetch ?? fetch;
+    const validateDns = configuredFetch === undefined;
+    const fetchMetadata = Effect.fn('MetadataClient.fetch')(function* (
+        value: string,
+    ) {
+        const initialUrl = validateUrl(value);
+        if (initialUrl instanceof MetadataError) {
+            return yield* initialUrl;
+        }
+        let currentUrl = initialUrl;
+        const deadline = Date.now() + 15_000;
+
+        for (let redirects = 0; redirects <= REDIRECT_LIMIT; redirects += 1) {
+            if (validateDns) {
+                yield* Effect.tryPromise({
+                    try: () => assertPublicHostname(currentUrl),
+                    catch: () =>
+                        failure(
+                            'unsafe_hostname',
+                            '元数据域名无法通过公网解析。',
+                            false,
+                        ),
+                });
+            }
+            const response = yield* Effect.tryPromise({
+                try: async (signal) => {
+                    const remaining = deadline - Date.now();
+                    if (remaining <= 0) {
+                        throw new Error('获取元数据超时。');
+                    }
+                    const controller = new AbortController();
+                    const timeout = setTimeout(
+                        () => controller.abort(),
+                        Math.min(FETCH_TIMEOUT_MS, remaining),
+                    );
+                    const abort = () => controller.abort();
+                    signal.addEventListener('abort', abort, { once: true });
+                    try {
+                        return await fetchImplementation(currentUrl, {
+                            headers: {
+                                Accept: 'text/html,application/xhtml+xml',
+                                'User-Agent': 'Gongyu metadata fetcher',
+                            },
+                            redirect: 'manual',
+                            signal: controller.signal,
+                        });
+                    } finally {
+                        clearTimeout(timeout);
+                        signal.removeEventListener('abort', abort);
+                    }
+                },
+                catch: () =>
+                    failure(
+                        'fetch_failed',
+                        '无法获取元数据。',
+                        true,
+                    ),
+            });
+
+            if ([301, 302, 303, 307, 308].includes(response.status)) {
+                if (redirects === REDIRECT_LIMIT) {
+                    return yield* failure(
+                        'redirect_limit',
+                        '元数据请求重定向次数过多。',
+                        false,
+                    );
+                }
+                const location = response.headers.get('Location');
+                if (location === null) {
+                    return yield* failure(
+                        'invalid_redirect',
+                        '元数据请求返回了无效的重定向。',
+                        false,
+                    );
+                }
+                const resolvedUrl = yield* Effect.try({
+                    try: () => new URL(location, currentUrl),
+                    catch: () =>
+                        failure(
+                            'invalid_redirect',
+                            '元数据请求返回了无效的重定向。',
+                            false,
+                        ),
+                });
+                const nextUrl = validateUrl(resolvedUrl.href);
+                if (nextUrl instanceof MetadataError) {
+                    return yield* failure(
+                        'insecure_redirect',
+                        '元数据请求的重定向必须保持 HTTPS。',
+                        false,
+                    );
+                }
+                currentUrl = nextUrl;
+                continue;
+            }
+
+            if (!response.ok) {
+                return yield* failure(
+                    'upstream_status',
+                    '元数据请求返回了失败的响应。',
+                    response.status === 429 || response.status >= 500,
+                );
+            }
+            const contentType = (response.headers.get('Content-Type') ?? '')
+                .split(';')[0]
+                .trim()
+                .toLowerCase();
+            if (
+                contentType !== 'text/html' &&
+                contentType !== 'application/xhtml+xml'
+            ) {
+                return yield* failure(
+                    'unsupported_content_type',
+                    '元数据请求需要返回 HTML 响应。',
+                    false,
+                );
+            }
+            const html = yield* readBoundedText(response, deadline);
+            return yield* extractMetadata(html, currentUrl);
+        }
+
+        return yield* failure(
+            'redirect_limit',
+            '元数据请求重定向次数过多。',
+            false,
+        );
+    });
+
+    return { fetch: fetchMetadata };
+}

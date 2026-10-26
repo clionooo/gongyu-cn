@@ -1,0 +1,508 @@
+import { BookmarkRepository } from '@gongyu/data/bookmark-repository';
+import { MetadataRepository } from '@gongyu/data/metadata-repository';
+import {
+    BookmarkNotFoundError,
+    BookmarkValidationError,
+    DuplicateBookmarkError,
+    decodeBookmarkInput,
+} from '@gongyu/domain/bookmarks';
+import { R2Store } from '@gongyu/integrations/r2-store';
+import { dispatchBookmarkOutboxBestEffort } from '@gongyu/jobs/outbox-dispatcher';
+import {
+    ArrowSquareOutIcon,
+    FloppyDiskIcon,
+    SparkleIcon,
+    TrashIcon,
+} from '@phosphor-icons/react';
+import { Effect } from 'effect';
+import { useState } from 'react';
+import {
+    data,
+    Form,
+    redirect,
+    useNavigation,
+    useRouteLoaderData,
+} from 'react-router';
+import {
+    requireAuthenticatedMutation,
+    requireAuthentication,
+} from '../auth/session.server';
+import {
+    type MetadataCandidates,
+    MetadataPreview,
+} from '../bookmarks/metadata-preview';
+import { AdminPage } from '../components/admin-page';
+import {
+    adminNativeControlClass,
+    adminPanelBodyClass,
+    adminPanelFooterClass,
+} from '../components/admin-panel';
+import {
+    Badge,
+    Button,
+    Dialog,
+    HydratedOnly,
+    Input,
+    InputArea,
+    LayerCard,
+    LinkButton,
+} from '../components/ui';
+import { failure, success } from '../effect/result';
+import { matchesFormSubmission } from '../form-navigation';
+import { cloudflareRequestContext } from '../platform-context';
+import type { loader as rootLoader } from '../root';
+import type { Route } from './+types/admin-bookmark-edit';
+
+export function meta({ loaderData }: Route.MetaArgs): Route.MetaDescriptors {
+    return [
+        {
+            title:
+                loaderData === undefined
+                    ? '书签 · Gongyu'
+                    : `编辑 ${loaderData.bookmark.title} · Gongyu`,
+        },
+    ];
+}
+
+export async function loader({ context, params, request }: Route.LoaderArgs) {
+    const { authentication, effect } = context.get(cloudflareRequestContext);
+    const location = new URL(request.url);
+    if (!authentication.authenticated) {
+        return redirect(
+            `/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`,
+        );
+    }
+    const bookmark = await effect.runPromise(
+        Effect.gen(function* () {
+            const bookmarks = yield* BookmarkRepository;
+            return yield* bookmarks.findByShortUrl(params.shortUrl ?? '');
+        }),
+    );
+    if (bookmark === null) {
+        throw new Response('书签不存在', { status: 404 });
+    }
+    return { bookmark };
+}
+
+export async function action({ context, params, request }: Route.ActionArgs) {
+    const { authentication, effect, env } = context.get(
+        cloudflareRequestContext,
+    );
+    requireAuthentication(authentication);
+    await requireAuthenticatedMutation({
+        authentication,
+        expectedOrigin: env.RP_ORIGIN,
+        request,
+        requireWritable: true,
+        runner: effect,
+    });
+    const shortUrl = params.shortUrl ?? '';
+    const formData = await request.formData();
+    const intent = formData.get('intent');
+    if (intent === 'delete') {
+        if (formData.get('confirmation') !== 'DELETE') {
+            return data(
+                { errors: { confirmation: '请输入 DELETE 以确认。' } },
+                { status: 400 },
+            );
+        }
+        const removed = await effect.runPromise(
+            Effect.gen(function* () {
+                const bookmarks = yield* BookmarkRepository;
+                const bookmark = yield* bookmarks.findByShortUrl(shortUrl);
+                if (bookmark === null) {
+                    return false;
+                }
+                const removed = yield* bookmarks.remove(shortUrl);
+                if (removed && bookmark.thumbnailKey !== null) {
+                    const r2 = yield* R2Store;
+                    yield* r2.delete(bookmark.thumbnailKey);
+                    const metadata = yield* MetadataRepository;
+                    yield* metadata.finalizeDeletion(shortUrl);
+                }
+                return removed;
+            }),
+        );
+        if (!removed) {
+            throw new Response('书签不存在', { status: 404 });
+        }
+        return redirect('/admin/bookmarks');
+    }
+
+    const url = formData.get('url');
+    const title = formData.get('title');
+    const description = formData.get('description');
+    const input = {
+        description:
+            typeof description === 'string' && description !== ''
+                ? description
+                : null,
+        title: typeof title === 'string' ? title.trim() : '',
+        url: typeof url === 'string' ? url : '',
+    };
+    const result = await effect.runPromise(
+        Effect.gen(function* () {
+            const decoded = yield* decodeBookmarkInput(input);
+            const bookmarks = yield* BookmarkRepository;
+            const bookmark = yield* bookmarks.update({
+                ...decoded,
+                shortUrl,
+                updatedAt: Date.now() * 1_000,
+            });
+            yield* dispatchBookmarkOutboxBestEffort({
+                bookmarkShortUrl: bookmark.shortUrl,
+                kind: 'metadata',
+            });
+            return bookmark;
+        }).pipe(
+            Effect.match({
+                onFailure: failure,
+                onSuccess: success,
+            }),
+        ),
+    );
+    if (result.ok) {
+        return redirect('/admin/bookmarks');
+    }
+    if (result.error instanceof DuplicateBookmarkError) {
+        return data(
+            { errors: { url: '该 URL 已被收藏。' }, input },
+            { status: 409 },
+        );
+    }
+    if (result.error instanceof BookmarkNotFoundError) {
+        throw new Response('书签不存在', { status: 404 });
+    }
+    if (result.error instanceof BookmarkValidationError) {
+        return data(
+            {
+                errors: { [result.error.field]: result.error.message },
+                input,
+            },
+            { status: 400 },
+        );
+    }
+    throw result.error;
+}
+
+export default function AdminBookmarkEdit({
+    actionData,
+    loaderData,
+}: Route.ComponentProps) {
+    const rootData = useRouteLoaderData<typeof rootLoader>('root');
+    const csrfToken = rootData?.csrfToken ?? '';
+    const navigation = useNavigation();
+    const formAction = `/admin/bookmarks/${loaderData.bookmark.shortUrl}/edit`;
+    const isUpdating = matchesFormSubmission(navigation, {
+        action: formAction,
+        fields: { intent: 'update' },
+        method: 'POST',
+    });
+    const isDeleting = matchesFormSubmission(navigation, {
+        action: formAction,
+        fields: { intent: 'delete' },
+        method: 'POST',
+    });
+    const isSubmitting = isUpdating || isDeleting;
+    const values =
+        actionData !== undefined && 'input' in actionData
+            ? actionData.input
+            : loaderData.bookmark;
+    const errors = actionData?.errors ?? {};
+    const urlError = 'url' in errors ? errors.url : undefined;
+    const titleError = 'title' in errors ? errors.title : undefined;
+    const confirmationError =
+        'confirmation' in errors ? errors.confirmation : undefined;
+    const [url, setUrl] = useState(values.url);
+    const [title, setTitle] = useState(values.title);
+    const [description, setDescription] = useState(values.description ?? '');
+    const [candidates, setCandidates] = useState<MetadataCandidates | null>(
+        null,
+    );
+    const hostname = new URL(loaderData.bookmark.url).hostname.replace(
+        /^www\./u,
+        '',
+    );
+    const savedDate = new Intl.DateTimeFormat('zh-CN', {
+        dateStyle: 'medium',
+        timeZone: 'UTC',
+    }).format(new Date(loaderData.bookmark.createdAt / 1_000));
+    return (
+        <AdminPage
+            actions={
+                <LinkButton
+                    external
+                    href={loaderData.bookmark.url}
+                    icon={ArrowSquareOutIcon}
+                    size="sm"
+                    variant="secondary"
+                >
+                    打开原文
+                </LinkButton>
+            }
+            description="更新书签内容，公开短链接保持不变。"
+            section="书签"
+            sectionHref="/admin/bookmarks"
+            title="编辑书签"
+        >
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,2.2fr)_minmax(16rem,1fr)]">
+                <LayerCard>
+                    <Form method="post">
+                        <div className={adminPanelBodyClass}>
+                            <input
+                                name="_csrf"
+                                type="hidden"
+                                value={csrfToken}
+                            />
+                            <input name="intent" type="hidden" value="update" />
+                            <Input
+                                description="修改 URL 会触发重新抓取元数据。"
+                                error={urlError}
+                                label="URL"
+                                maxLength={2048}
+                                name="url"
+                                onChange={(event) =>
+                                    setUrl(event.currentTarget.value)
+                                }
+                                required
+                                type="url"
+                                value={url}
+                            />
+                            <MetadataPreview
+                                csrfToken={csrfToken}
+                                onCandidates={setCandidates}
+                                url={url}
+                            />
+                            {candidates === null ? null : (
+                                <div className="rounded-lg border border-gongyu-line p-3">
+                                    <div className="flex items-center gap-2 text-sm font-medium text-gongyu-default">
+                                        <SparkleIcon
+                                            aria-hidden="true"
+                                            size={17}
+                                        />
+                                        建议已就绪
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {candidates.title === null ? null : (
+                                            <Button
+                                                onClick={() =>
+                                                    setTitle(
+                                                        candidates.title ??
+                                                            title,
+                                                    )
+                                                }
+                                                size="sm"
+                                                type="button"
+                                                variant="secondary"
+                                            >
+                                                使用建议标题
+                                            </Button>
+                                        )}
+                                        {candidates.description ===
+                                        null ? null : (
+                                            <Button
+                                                onClick={() =>
+                                                    setDescription(
+                                                        candidates.description ??
+                                                            description,
+                                                    )
+                                                }
+                                                size="sm"
+                                                type="button"
+                                                variant="secondary"
+                                            >
+                                                使用建议备注
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                            <Input
+                                error={titleError}
+                                label="标题"
+                                maxLength={500}
+                                name="title"
+                                onChange={(event) =>
+                                    setTitle(event.currentTarget.value)
+                                }
+                                required
+                                value={title}
+                            />
+                            <InputArea
+                                className="min-h-28"
+                                description="保留让这个链接值得回访的细节。"
+                                label="描述"
+                                name="description"
+                                onChange={(event) =>
+                                    setDescription(event.currentTarget.value)
+                                }
+                                value={description}
+                            />
+                        </div>
+                        <div className={adminPanelFooterClass}>
+                            <Button
+                                disabled={isSubmitting}
+                                icon={FloppyDiskIcon}
+                                loading={isUpdating}
+                                type="submit"
+                                variant="primary"
+                            >
+                                保存修改
+                            </Button>
+                        </div>
+                    </Form>
+                </LayerCard>
+
+                <aside className="space-y-3">
+                    <LayerCard className="overflow-hidden">
+                        {loaderData.bookmark.thumbnailSha256 === null ? (
+                            <div className="flex aspect-[16/9] items-center justify-center bg-gongyu-tint">
+                                <span className="text-sm text-gongyu-subtle">
+                                    暂无镜像预览
+                                </span>
+                            </div>
+                        ) : (
+                            <img
+                                alt=""
+                                className="aspect-[16/9] w-full object-cover"
+                                src={`/thumbnails/${loaderData.bookmark.shortUrl}/${loaderData.bookmark.thumbnailSha256}`}
+                            />
+                        )}
+                        <dl className="space-y-3 p-4 text-sm">
+                            <div>
+                                <dt className="text-gongyu-subtle">来源</dt>
+                                <dd className="mt-1">
+                                    <Badge variant="secondary">
+                                        {hostname}
+                                    </Badge>
+                                </dd>
+                            </div>
+                            <div>
+                                <dt className="text-gongyu-subtle">保存时间</dt>
+                                <dd className="mt-1 font-medium text-gongyu-default">
+                                    {savedDate}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt className="text-gongyu-subtle">
+                                    公开短链接
+                                </dt>
+                                <dd className="mt-1 font-mono text-xs text-gongyu-default">
+                                    /b/{loaderData.bookmark.shortUrl}
+                                </dd>
+                            </div>
+                        </dl>
+                    </LayerCard>
+
+                    <details
+                        className="border-t border-gongyu-line pt-2"
+                        open={confirmationError !== undefined}
+                    >
+                        <summary className="cursor-pointer text-sm text-gongyu-danger hover:underline">
+                            删除书签
+                        </summary>
+                        <div className="mt-3 rounded-lg bg-gongyu-danger-tint/30 p-3 ring ring-gongyu-danger/20">
+                            <p className="text-sm leading-6 text-gongyu-subtle">
+                                永久删除此书签及其镜像预览。
+                            </p>
+                            <HydratedOnly>
+                                <Dialog.Root
+                                    defaultOpen={
+                                        confirmationError !== undefined
+                                    }
+                                    role="alertdialog"
+                                >
+                                    <Dialog.Trigger
+                                        render={
+                                            <Button
+                                                className="mt-3"
+                                                icon={TrashIcon}
+                                                size="sm"
+                                                variant="secondary-destructive"
+                                            />
+                                        }
+                                    >
+                                        删除书签
+                                    </Dialog.Trigger>
+                                    <Dialog className="space-y-5 p-6" size="lg">
+                                        <div className="space-y-2">
+                                            <Dialog.Title>
+                                                删除这个书签？
+                                            </Dialog.Title>
+                                            <Dialog.Description>
+                                                输入 DELETE 以永久删除“
+                                                {loaderData.bookmark.title}”。
+                                            </Dialog.Description>
+                                        </div>
+                                        <Form
+                                            className="space-y-4"
+                                            method="post"
+                                        >
+                                            <input
+                                                name="_csrf"
+                                                type="hidden"
+                                                value={csrfToken}
+                                            />
+                                            <input
+                                                name="intent"
+                                                type="hidden"
+                                                value="delete"
+                                            />
+                                            <Input
+                                                error={confirmationError}
+                                                label="确认短语"
+                                                name="confirmation"
+                                                placeholder="DELETE"
+                                            />
+                                            <div className="flex justify-end gap-2">
+                                                <Dialog.Close
+                                                    render={
+                                                        <Button variant="secondary" />
+                                                    }
+                                                >
+                                                    取消
+                                                </Dialog.Close>
+                                                <Button
+                                                    disabled={isSubmitting}
+                                                    loading={isDeleting}
+                                                    type="submit"
+                                                    variant="destructive"
+                                                >
+                                                    永久删除
+                                                </Button>
+                                            </div>
+                                        </Form>
+                                    </Dialog>
+                                </Dialog.Root>
+                            </HydratedOnly>
+                            <noscript>
+                                <Form className="mt-4 space-y-3" method="post">
+                                    <input
+                                        name="_csrf"
+                                        type="hidden"
+                                        value={csrfToken}
+                                    />
+                                    <input
+                                        name="intent"
+                                        type="hidden"
+                                        value="delete"
+                                    />
+                                    <label className="block space-y-2 text-sm text-gongyu-default">
+                                        <span>输入 DELETE 以确认</span>
+                                        <input
+                                            className={adminNativeControlClass}
+                                            name="confirmation"
+                                        />
+                                    </label>
+                                    <Button type="submit" variant="destructive">
+                                        永久删除
+                                    </Button>
+                                </Form>
+                            </noscript>
+                        </div>
+                    </details>
+                </aside>
+            </div>
+        </AdminPage>
+    );
+}

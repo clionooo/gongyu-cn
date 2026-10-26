@@ -1,0 +1,299 @@
+@source "../../../packages/ui/src/**/*.{ts,tsx}";
+@import "tailwindcss";
+
+@theme inline {
+    --color-gongyu-base: var(--mantine-color-body);
+    --color-gongyu-brand: var(--mantine-primary-color-filled);
+    --color-gongyu-control: var(--mantine-color-default);
+    --color-gongyu-danger: var(--mantine-color-red-text);
+    --color-gongyu-danger-tint: var(--mantine-color-red-light);
+    --color-gongyu-default: var(--mantine-color-text);
+    --color-gongyu-elevated: var(--mantine-color-default);
+    --color-gongyu-fill: var(--mantine-color-default-border);
+    --color-gongyu-focus: var(--mantine-primary-color-filled);
+    --color-gongyu-info: var(--mantine-color-blue-text);
+    --color-gongyu-inverse: var(--mantine-color-white);
+    --color-gongyu-line: var(--mantine-color-default-border);
+    --color-gongyu-link: var(--mantine-color-anchor);
+    --color-gongyu-recessed: light-dark(
+        var(--mantine-color-gray-0),
+        var(--mantine-color-dark-9)
+    );
+    --color-gongyu-subtle: var(--mantine-color-dimmed);
+    --color-gongyu-success: var(--mantine-color-teal-text);
+    --color-gongyu-success-tint: var(--mantine-color-teal-light);
+    --color-gongyu-tint: light-dark(
+        var(--mantine-color-gray-1),
+        var(--mantine-color-dark-6)
+    );
+}
+
+:root {
+    --gongyu-content-default: 56rem;
+    --gongyu-content-wide: 80rem;
+    --gongyu-page-gutter: 1.5rem;
+
+    font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+}
+
+@media (min-width: 40rem) {
+    :root {
+        --gongyu-page-gutter: 2rem;
+    }
+}
+
+.gongyu-page-shell {
+    width: 100%;
+    padding-inline: var(--gongyu-page-gutter);
+}
+
+.gongyu-page-shell-default {
+    max-width: var(--gongyu-content-default);
+}
+
+.gongyu-page-shell-wide {
+    max-width: var(--gongyu-content-wide);
+}
+
+html {
+    background: var(--mantine-color-body);
+}
+
+body {
+    min-width: 320px;
+    margin: 0;
+    background: var(--mantine-color-body);
+    color: var(--mantine-color-text);
+}
+
+::selection {
+    background: color-mix(
+        in oklch,
+        var(--mantine-primary-color-filled) 22%,
+        transparent
+    );
+}
+
+.gongyu-public-app {
+    --mantine-color-text: #463f39;
+    --mantine-color-dimmed: #7a7067;
+    --mantine-color-anchor: #a55338;
+    --mantine-color-default: rgb(255 253 250 / 58%);
+    --mantine-color-default-hover: rgb(248 242 236 / 76%);
+    --mantine-color-default-border: #e4dcd3;
+
+    background-image:
+        radial-gradient(
+            circle at 15% 0%,
+            color-mix(
+                in oklch,
+                var(--mantine-primary-color-filled) 5%,
+                transparent
+            ),
+            transparent 28rem
+        ),
+        radial-gradient(
+            circle at 85% 18rem,
+            color-mix(
+                in oklch,
+                var(--mantine-color-yellow-filled) 3%,
+                transparent
+            ),
+            transparent 24rem
+        );
+}
+
+.gongyu-public-app .gongyu-bookmark-card {
+    border-color: #e7dfd7;
+    background: rgb(255 253 250 / 64%);
+    box-shadow: 0 1px 3px rgb(95 70 52 / 7%);
+}
+
+.gongyu-public-app .gongyu-bookmark-card:hover {
+    border-color: #ddd3ca;
+    box-shadow: 0 3px 10px rgb(95 70 52 / 9%);
+}
+
+.gongyu-public-app .gongyu-library-toolbar {
+    border-color: #e7dfd7;
+    background: rgb(255 253 250 / 70%);
+    box-shadow: 0 1px 3px rgb(95 70 52 / 6%);
+    backdrop-filter: blur(8px);
+}
+
+.gongyu-public-app .gongyu-bookmark-list {
+    border-color: #e7dfd7;
+    background: rgb(255 253 250 / 54%);
+    box-shadow: 0 1px 3px rgb(95 70 52 / 6%);
+}
+
+.gongyu-public-app .gongyu-bookmark-row {
+    transition: background-color 150ms ease;
+}
+
+.gongyu-public-app .gongyu-bookmark-preview {
+    box-shadow: 0 1px 2px rgb(95 70 52 / 8%);
+    filter: saturate(0.78);
+    opacity: 0.82;
+    transition:
+        filter 150ms ease,
+        opacity 150ms ease;
+}
+
+.gongyu-public-app .gongyu-bookmark-row:hover,
+.gongyu-public-app .gongyu-bookmark-row:focus-within {
+    background: rgb(248 242 236 / 58%);
+}
+
+.gongyu-public-app .gongyu-bookmark-row:hover .gongyu-bookmark-preview,
+.gongyu-public-app .gongyu-bookmark-row:focus-within .gongyu-bookmark-preview {
+    filter: saturate(0.95);
+    opacity: 1;
+}
+
+[data-mantine-color-scheme="dark"] .gongyu-public-app {
+    --mantine-color-text: #d9d2ca;
+    --mantine-color-dimmed: #aaa198;
+    --mantine-color-anchor: #d98b6d;
+    --mantine-color-default: rgb(48 43 39 / 58%);
+    --mantine-color-default-hover: rgb(61 55 50 / 76%);
+    --mantine-color-default-border: #403a35;
+}
+
+[data-mantine-color-scheme="dark"]
+    .gongyu-public-app
+    .gongyu-bookmark-card {
+    border-color: #3e3934;
+    background: rgb(48 43 39 / 52%);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+[data-mantine-color-scheme="dark"]
+    .gongyu-public-app
+    .gongyu-bookmark-card:hover {
+    border-color: #4a433d;
+    box-shadow: 0 3px 10px rgb(0 0 0 / 16%);
+}
+
+[data-mantine-color-scheme="dark"]
+    .gongyu-public-app
+    .gongyu-library-toolbar {
+    border-color: #3e3934;
+    background: rgb(48 43 39 / 62%);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+}
+
+[data-mantine-color-scheme="dark"]
+    .gongyu-public-app
+    .gongyu-bookmark-list {
+    border-color: #3e3934;
+    background: rgb(48 43 39 / 44%);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+}
+
+[data-mantine-color-scheme="dark"]
+    .gongyu-public-app
+    .gongyu-bookmark-row:hover,
+[data-mantine-color-scheme="dark"]
+    .gongyu-public-app
+    .gongyu-bookmark-row:focus-within {
+    background: rgb(61 55 50 / 48%);
+}
+
+.gongyu-admin-app {
+    --mantine-color-body: #faf7f3;
+    --mantine-color-text: #4b443e;
+    --mantine-color-dimmed: #7c736b;
+    --mantine-color-anchor: #a55338;
+    --mantine-color-default: rgb(255 253 250 / 64%);
+    --mantine-color-default-hover: rgb(247 242 237 / 78%);
+    --mantine-color-default-border: #e5ddd5;
+    --color-gongyu-fill: #ece5de;
+    --color-gongyu-tint: #f4eee8;
+
+    background: var(--mantine-color-body);
+}
+
+.gongyu-admin-app .mantine-Paper-root {
+    border-color: #e6ded6;
+    background: rgb(255 253 250 / 68%);
+    box-shadow: 0 1px 3px rgb(95 70 52 / 6%);
+}
+
+.gongyu-admin-sidebar {
+    background: linear-gradient(180deg, #fcfaf7, #faf7f3);
+    box-shadow: 8px 0 32px rgb(95 70 52 / 2%);
+}
+
+.gongyu-admin-main {
+    background-image: radial-gradient(
+        circle at 72% -8rem,
+        color-mix(
+            in oklch,
+            var(--mantine-primary-color-filled) 3%,
+            transparent
+        ),
+        transparent 32rem
+    );
+}
+
+[data-mantine-color-scheme="dark"] .gongyu-admin-app {
+    --mantine-color-body: #1d1a18;
+    --mantine-color-text: #d7d0c8;
+    --mantine-color-dimmed: #aaa198;
+    --mantine-color-anchor: #d78a6c;
+    --mantine-color-default: rgb(47 42 38 / 60%);
+    --mantine-color-default-hover: rgb(58 52 47 / 76%);
+    --mantine-color-default-border: #3b3631;
+    --color-gongyu-fill: #37322e;
+    --color-gongyu-tint: #302b27;
+}
+
+[data-mantine-color-scheme="dark"]
+    .gongyu-admin-app
+    .mantine-Paper-root {
+    border-color: #3a3530;
+    background: rgb(42 37 34 / 62%);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+}
+
+[data-mantine-color-scheme="dark"] .gongyu-admin-sidebar {
+    background: linear-gradient(180deg, #211d1a, #1d1a18);
+    box-shadow: 8px 0 32px rgb(0 0 0 / 12%);
+}
+
+.mantine-Paper-root {
+    transition:
+        border-color 150ms ease,
+        box-shadow 150ms ease;
+}
+
+.min-h-28 .mantine-Textarea-input,
+.mantine-Textarea-root.min-h-28 .mantine-Textarea-input {
+    min-height: 7rem;
+}
+
+.min-h-32 .mantine-Textarea-input,
+.mantine-Textarea-root.min-h-32 .mantine-Textarea-input {
+    min-height: 8rem;
+}
+
+button,
+a {
+    -webkit-tap-highlight-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

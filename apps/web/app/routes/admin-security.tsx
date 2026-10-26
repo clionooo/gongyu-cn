@@ -1,0 +1,232 @@
+import {
+    RegistrationOptionsEnvelope,
+    RegistrationVerificationRequest,
+} from '@gongyu/auth/contracts';
+import { FingerprintSimpleIcon, KeyIcon } from '@phosphor-icons/react';
+import { startRegistration } from '@simplewebauthn/browser';
+import { Schema } from 'effect';
+import { useRef, useState } from 'react';
+import { redirect, useRouteLoaderData } from 'react-router';
+import { AdminPage } from '../components/admin-page';
+import {
+    Badge,
+    Banner,
+    Button,
+    Dialog,
+    HydratedOnly,
+    LayerCard,
+} from '../components/ui';
+import { cloudflareRequestContext } from '../platform-context';
+import type { loader as rootLoader } from '../root';
+import type { Route } from './+types/admin-security';
+
+class ApiErrorEnvelope extends Schema.Class<ApiErrorEnvelope>(
+    'SecurityApiErrorEnvelope',
+)({
+    error: Schema.Struct({ code: Schema.String, message: Schema.String }),
+}) {}
+
+export function meta(): Route.MetaDescriptors {
+    return [{ title: '安全 · Gongyu' }];
+}
+
+export function loader({ context, request }: Route.LoaderArgs) {
+    const { authentication } = context.get(cloudflareRequestContext);
+    if (!authentication.authenticated) {
+        const location = new URL(request.url);
+        return redirect(
+            `/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`,
+        );
+    }
+    return null;
+}
+
+async function postJson(
+    path: string,
+    body: unknown,
+    csrfToken: string,
+): Promise<unknown> {
+    const response = await fetch(path, {
+        body: JSON.stringify(body),
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken,
+        },
+        method: 'POST',
+    });
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+        const failure =
+            await Schema.decodeUnknownPromise(ApiErrorEnvelope)(payload);
+        throw new Error(failure.error.message);
+    }
+    return payload;
+}
+
+export default function AdminSecurity() {
+    const rootData = useRouteLoaderData<typeof rootLoader>('root');
+    const csrfToken = rootData?.csrfToken ?? '';
+    const [message, setMessage] = useState<string | null>(null);
+    const [processing, setProcessing] = useState(false);
+    const replacementInFlight = useRef(false);
+
+    async function replacePasskey() {
+        if (replacementInFlight.current) {
+            return;
+        }
+        replacementInFlight.current = true;
+        setProcessing(true);
+        setMessage('正在等待替换通行密钥…');
+        try {
+            const envelope = await Schema.decodeUnknownPromise(
+                RegistrationOptionsEnvelope,
+            )(
+                await postJson(
+                    '/api/passkey/registration/options',
+                    {},
+                    csrfToken,
+                ),
+            );
+            const response = await startRegistration({
+                optionsJSON: envelope.options,
+            });
+            await postJson(
+                '/api/passkey/registration/verify',
+                RegistrationVerificationRequest.make({
+                    ceremonyId: envelope.ceremonyId,
+                    response,
+                }),
+                csrfToken,
+            );
+            window.location.assign('/admin/security');
+        } catch (error) {
+            replacementInFlight.current = false;
+            setProcessing(false);
+            setMessage(
+                error instanceof Error
+                    ? error.message
+                    : '通行密钥替换失败。',
+            );
+        }
+    }
+
+    return (
+        <AdminPage
+            description="管理你的管理员通行密钥。"
+            title="安全"
+        >
+            <div className="space-y-3">
+                <LayerCard>
+                    <section className="p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="flex items-start gap-3">
+                                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-gongyu-line text-gongyu-success">
+                                    <FingerprintSimpleIcon
+                                        aria-hidden="true"
+                                        size={26}
+                                        weight="duotone"
+                                    />
+                                </span>
+                                <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h2 className="font-semibold text-gongyu-default">
+                                            管理员通行密钥
+                                        </h2>
+                                        <Badge
+                                            appearance="dot"
+                                            variant="success"
+                                        >
+                                            已启用
+                                        </Badge>
+                                    </div>
+                                    <p className="mt-1 max-w-xl text-sm leading-5 text-gongyu-subtle">
+                                        Gongyu 只接受一个通行密钥。它可以使用设备锁屏、安全密钥或同步凭据。
+                                    </p>
+                                </div>
+                            </div>
+                            <HydratedOnly>
+                                <Dialog.Root role="alertdialog">
+                                    <Dialog.Trigger
+                                        render={
+                                            <Button
+                                                icon={KeyIcon}
+                                                size="sm"
+                                                variant="secondary"
+                                            />
+                                        }
+                                    >
+                                        替换通行密钥
+                                    </Dialog.Trigger>
+                                    <Dialog className="space-y-5 p-6" size="lg">
+                                        <div className="space-y-2">
+                                            <Dialog.Title>
+                                                替换管理员通行密钥？
+                                            </Dialog.Title>
+                                            <Dialog.Description>
+                                                当前凭据会立即失效，所有会话都会被注销，然后此浏览器使用新凭据重新登录。
+                                            </Dialog.Description>
+                                        </div>
+                                        <div className="flex justify-end gap-2">
+                                            <Dialog.Close
+                                                render={
+                                                    <Button variant="secondary" />
+                                                }
+                                            >
+                                                取消
+                                            </Dialog.Close>
+                                            <Button
+                                                loading={processing}
+                                                onClick={replacePasskey}
+                                                type="button"
+                                                variant="destructive"
+                                            >
+                                                立即替换
+                                            </Button>
+                                        </div>
+                                    </Dialog>
+                                </Dialog.Root>
+                            </HydratedOnly>
+                        </div>
+                        {message === null ? null : (
+                            <div className="mt-4 rounded-lg border border-gongyu-line px-3 py-2">
+                                <p
+                                    aria-live="polite"
+                                    className="text-sm text-gongyu-default"
+                                >
+                                    {message}
+                                </p>
+                            </div>
+                        )}
+                    </section>
+                </LayerCard>
+                <LayerCard>
+                    <section className="grid gap-4 p-4 text-sm sm:grid-cols-2">
+                        <div>
+                            <h2 className="font-medium text-gongyu-default">
+                                会话保护
+                            </h2>
+                            <p className="mt-1 leading-5 text-gongyu-subtle">
+                                会话在闲置 7 天后过期，最长有效期固定为 30 天。
+                            </p>
+                        </div>
+                        <div>
+                            <h2 className="font-medium text-gongyu-default">
+                                丢失了通行密钥？
+                            </h2>
+                            <p className="mt-1 leading-5 text-gongyu-subtle">
+                                恢复需要部署权限、初始化令牌，以及准确的运维确认短语。
+                            </p>
+                        </div>
+                    </section>
+                </LayerCard>
+            </div>
+            <noscript>
+                <Banner
+                    description="通行密钥注册需要浏览器支持 JavaScript 和 WebAuthn API。"
+                    title="替换通行密钥需要 JavaScript"
+                    variant="error"
+                />
+            </noscript>
+        </AdminPage>
+    );
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@gongyu/domain",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./backup": "./src/backup.ts",
+    "./bookmarks": "./src/bookmarks.ts",
+    "./dashboard": "./src/dashboard.ts",
+    "./feed": "./src/feed.ts",
+    "./health": "./src/health.ts",
+    "./jobs": "./src/jobs.ts",
+    "./metadata": "./src/metadata.ts",
+    "./portability": "./src/portability.ts",
+    "./settings": "./src/settings.ts",
+    "./social": "./src/social.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.97"
+  }
+}

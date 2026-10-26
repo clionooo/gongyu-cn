@@ -1,0 +1,21 @@
+{
+  "name": "@gongyu/data",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./backup-repository": "./src/backup-repository.ts",
+    "./bookmark-repository": "./src/bookmark-repository.ts",
+    "./dashboard-repository": "./src/dashboard-repository.ts",
+    "./data-run-repository": "./src/data-run-repository.ts",
+    "./d1-store": "./src/d1-store.ts",
+    "./metadata-repository": "./src/metadata-repository.ts",
+    "./settings-repository": "./src/settings-repository.ts",
+    "./social-repository": "./src/social-repository.ts",
+    "./work-repository": "./src/work-repository.ts"
+  },
+  "dependencies": {
+    "@gongyu/domain": "workspace:*",
+    "@gongyu/integrations": "workspace:*",
+    "effect": "4.0.0-beta.97"
+  }
+}

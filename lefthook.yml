@@ -1,0 +1,9 @@
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{js,ts,tsx,json,jsonc}"
+      run: bun run lint
+    typecheck:
+      glob: "*.{ts,tsx,json,jsonc}"
+      run: bun run typecheck

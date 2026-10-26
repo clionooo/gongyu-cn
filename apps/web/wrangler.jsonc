@@ -1,0 +1,144 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gongyu-cloudflare-web",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "cache": {
+    "enabled": true
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "upload_source_maps": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gongyu-local",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "../../migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPLOADS",
+      "bucket_name": "gongyu-phase0-uploads"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "gongyu-phase0-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "gongyu-phase0-jobs",
+        "dead_letter_queue": "gongyu-phase0-jobs-dlq",
+        "max_batch_size": 5,
+        "max_batch_timeout": 2,
+        "max_retries": 5,
+        "max_concurrency": 2
+      },
+      {
+        "queue": "gongyu-phase0-jobs-dlq",
+        "max_batch_size": 5,
+        "max_batch_timeout": 2,
+        "max_retries": 1,
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "workflows": [
+    {
+      "binding": "DATA_WORKFLOW",
+      "class_name": "DataWorkflow",
+      "name": "gongyu-data-workflow"
+    }
+  ],
+  "vars": {
+    "APP_ENV": "local",
+    "ENCRYPTION_KEYS": "{\"currentVersion\":1,\"keys\":{\"1\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"}}",
+    "RP_ID": "localhost",
+    "RP_ORIGIN": "http://localhost:5173",
+    "SETUP_TOKEN": "local-development-bootstrap-token"
+  },
+  "env": {
+    "production": {
+      "name": "gongyu",
+      "workers_dev": false,
+      "preview_urls": false,
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "gongyu-db",
+          "database_id": "c283449e-400f-477a-a384-f21545e5c8c4",
+          "migrations_dir": "../../migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "UPLOADS",
+          "bucket_name": "gongyu-uploads"
+        }
+      ],
+      "images": {
+        "binding": "IMAGES"
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "JOBS_QUEUE",
+            "queue": "gongyu-jobs"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "gongyu-jobs",
+            "dead_letter_queue": "gongyu-jobs-dlq",
+            "max_batch_size": 5,
+            "max_batch_timeout": 2,
+            "max_retries": 5,
+            "max_concurrency": 2
+          },
+          {
+            "queue": "gongyu-jobs-dlq",
+            "max_batch_size": 5,
+            "max_batch_timeout": 2,
+            "max_retries": 1,
+            "max_concurrency": 1
+          }
+        ]
+      },
+      "triggers": {
+        "crons": ["* * * * *"]
+      },
+      "workflows": [
+        {
+          "binding": "DATA_WORKFLOW",
+          "class_name": "DataWorkflow",
+          "name": "gongyu-data-workflow"
+        }
+      ],
+      "vars": {
+        "APP_ENV": "production",
+        "RP_ID": "icco.ccwu.cc",
+        "RP_ORIGIN": "https://icco.ccwu.cc"
+      }
+    }
+  }
+}

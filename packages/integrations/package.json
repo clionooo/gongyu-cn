@@ -1,0 +1,21 @@
+{
+  "name": "@gongyu/integrations",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./encryption": "./src/encryption.ts",
+    "./metadata-client": "./src/metadata-client.ts",
+    "./network-safety": "./src/network-safety.ts",
+    "./queue-producer": "./src/queue-producer.ts",
+    "./r2-store": "./src/r2-store.ts",
+    "./shaarli-api-client": "./src/shaarli-api-client.ts",
+    "./shaarli-datastore": "./src/shaarli-datastore.ts",
+    "./social-clients": "./src/social-clients.ts",
+    "./thumbnail-client": "./src/thumbnail-client.ts",
+    "./workers-cache": "./src/workers-cache.ts"
+  },
+  "dependencies": {
+    "@gongyu/domain": "workspace:*",
+    "effect": "4.0.0-beta.97"
+  }
+}

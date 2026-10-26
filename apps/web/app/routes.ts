@@ -1,0 +1,52 @@
+import { index, type RouteConfig, route } from '@react-router/dev/routes';
+
+export default [
+    index('routes/home.tsx'),
+    route('search', 'routes/search.tsx'),
+    route('b/:shortUrl', 'routes/bookmark-detail.tsx'),
+    route('shaare/:hash', 'routes/shaarli-redirect.ts'),
+    route('feed', 'routes/feed.ts'),
+    route('bookmarklet', 'routes/bookmarklet.tsx'),
+    route('health', 'routes/health.ts'),
+    route('theme', 'routes/theme.ts'),
+    route('thumbnails/:shortUrl/:digest', 'routes/thumbnail.ts'),
+    route('setup', 'routes/setup.tsx'),
+    route('login', 'routes/login.tsx'),
+    route('logout', 'routes/logout.ts'),
+    route(
+        'api/password/setup',
+        'routes/password-setup.ts',
+    ),
+    route(
+        'api/password/login',
+        'routes/password-login.ts',
+    ),
+    route('passkey', 'routes/passkey.tsx'),
+    route('admin/dashboard', 'routes/admin-dashboard.tsx'),
+    route('admin/data', 'routes/admin-data.tsx'),
+    route('admin/data/:runId/download', 'routes/admin-data-download.ts'),
+    route('admin/jobs', 'routes/admin-jobs.tsx'),
+    route('admin/settings', 'routes/admin-settings.tsx'),
+    route('admin/bookmarks', 'routes/admin-bookmarks.tsx'),
+    route('admin/bookmarks/new', 'routes/admin-bookmark-new.tsx'),
+    route('admin/bookmarks/:shortUrl/edit', 'routes/admin-bookmark-edit.tsx'),
+    route('admin/security', 'routes/admin-security.tsx'),
+    route(
+        'api/passkey/registration/options',
+        'routes/passkey-registration-options.ts',
+    ),
+    route(
+        'api/passkey/registration/verify',
+        'routes/passkey-registration-verify.ts',
+    ),
+    route(
+        'api/passkey/authentication/options',
+        'routes/passkey-authentication-options.ts',
+    ),
+    route(
+        'api/passkey/authentication/verify',
+        'routes/passkey-authentication-verify.ts',
+    ),
+    route('api/auth/recovery', 'routes/auth-recovery.ts'),
+    route('api/metadata/preview', 'routes/metadata-preview.ts'),
+] satisfies RouteConfig;
