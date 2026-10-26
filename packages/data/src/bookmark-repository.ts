@@ -117,6 +117,20 @@ function makeFtsQuery(query: string): string {
         .join(' AND ');
 }
 
+// FTS5 默认分词器（unicode61）不会切分中日韩文字——整串汉字会被当作一个词，
+// 导致「视频号」搜不到「视频号助手」。含 CJK 字符的查询改用 LIKE 子串匹配。
+function hasCjk(text: string): boolean {
+    return /[\u1100-\u11FF\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/u.test(text);
+}
+
+function makeLikePatterns(query: string): string[] {
+    return query
+        .trim()
+        .split(/\s+/u)
+        .filter((part) => part.length > 0)
+        .map((part) => `%${part.replaceAll(/([%_\\])/g, '\\$1')}%`);
+}
+
 export function makeBookmarkRepository(
     d1Store: D1Store['Service'],
 ): BookmarkRepositoryShape {
@@ -388,6 +402,66 @@ export function makeBookmarkRepository(
                 pageCount: Math.max(1, Math.ceil(total / perPage)),
                 perPage,
                 total,
+            });
+        }
+
+        if (hasCjk(query)) {
+            const patterns = makeLikePatterns(query);
+            const likeCondition = patterns
+                .map(
+                    () =>
+                        `(b.title LIKE ? ESCAPE '\\' OR b.description LIKE ? ESCAPE '\\' OR b.url LIKE ? ESCAPE '\\')`,
+                )
+                .join(' AND ');
+            const likeParams = patterns.flatMap((pattern) => [
+                pattern,
+                pattern,
+                pattern,
+            ]);
+            const [cjkCount, cjkRows] = yield* Effect.all([
+                d1Store.first(
+                    CountRow,
+                    `
+                        SELECT COUNT(*) AS count
+                        FROM bookmarks AS b
+                        WHERE b.deletion_state = 'active'
+                          AND ${likeCondition}
+                    `,
+                    likeParams,
+                ),
+                d1Store.query(
+                    Bookmark,
+                    `
+                        SELECT
+                            b.id,
+                            b.short_url AS "shortUrl",
+                            b.shaarli_short_url AS "shaarliShortUrl",
+                            b.url,
+                            b.title,
+                            b.description,
+                            b.thumbnail_url AS "thumbnailUrl",
+                            b.thumbnail_key AS "thumbnailKey",
+                            b.thumbnail_cleanup_key AS "thumbnailCleanupKey",
+                            b.thumbnail_sha256 AS "thumbnailSha256",
+                            b.deletion_state AS "deletionState",
+                            b.created_at AS "createdAt",
+                            b.updated_at AS "updatedAt"
+                        FROM bookmarks AS b
+                        WHERE b.deletion_state = 'active'
+                          AND ${likeCondition}
+                        ORDER BY b.created_at DESC, b.id DESC
+                        LIMIT ? OFFSET ?
+                    `,
+                    [...likeParams, perPage, offset],
+                ),
+            ]);
+            const cjkTotal = cjkCount?.count ?? 0;
+            return BookmarkPage.make({
+                bookmarks: cjkRows.rows,
+                page,
+                pageCount: Math.max(1, Math.ceil(cjkTotal / perPage)),
+                perPage,
+                total: cjkTotal,
             });
         }
 
